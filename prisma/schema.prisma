@@ -1,0 +1,316 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  name         String
+  role         String   // SALESMAN, ADMIN, SUPERVISOR, ACCOUNTANT, OWNER
+  phone        String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  orders         SalesOrder[]
+  productionRuns ProductionRun[]
+  auditLogs      AuditLog[]
+}
+
+model Customer {
+  id           String   @id @default(cuid())
+  name         String
+  customerType String   // RETAILER, DISTRIBUTOR
+  gstin        String?
+  phone        String
+  address      String
+  state        String
+  stateCode    String   // '33' for TN, '29' for KA
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  orders   SalesOrder[]
+  invoices Invoice[]
+  payments PaymentReceipt[]
+}
+
+model Supplier {
+  id        String   @id @default(cuid())
+  name      String
+  gstin     String?
+  phone     String
+  address   String
+  state     String
+  stateCode String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  purchases Purchase[]
+}
+
+model Item {
+  id              String   @id @default(cuid())
+  code            String   @unique // RM-FLOUR, FG-MURUKKU-200G
+  name            String
+  category        String   // RAW_MATERIAL, PACKAGING, FINISHED_GOOD
+  uom             String   // KG, LITRE, PIECE, PACKET, CARTON
+  hsnCode         String
+  gstRate         Float    @default(5.0)
+  currentStock    Float    @default(0.0)
+  valuationRate   Float    @default(0.0) // Last purchase or average rate
+  minReorderLevel Float    @default(0.0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  bomAsFinishedGood   BOM[]                   @relation("FinishedGood")
+  bomItemsAsRaw       BOMItem[]               @relation("RawItem")
+  productionRuns      ProductionRun[]
+  consumptions        ProductionConsumption[]
+  ledgerMovements     InventoryLedger[]
+  purchaseItems       PurchaseItem[]
+  salesOrderItems     SalesOrderItem[]
+  invoiceItems        InvoiceItem[]
+}
+
+model BOM {
+  id                 String   @id @default(cuid())
+  name               String
+  finishedGoodItemId String
+  finishedGoodItem   Item     @relation("FinishedGood", fields: [finishedGoodItemId], references: [id])
+  batchSize          Float    // e.g. 200 packets
+  batchUom           String   // PACKET
+  expectedYieldRatio Float    @default(1.0)
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  items          BOMItem[]
+  productionRuns ProductionRun[]
+}
+
+model BOMItem {
+  id               String   @id @default(cuid())
+  bomId            String
+  bom              BOM      @relation(fields: [bomId], references: [id], onDelete: Cascade)
+  rawItemId        String
+  rawItem          Item     @relation("RawItem", fields: [rawItemId], references: [id])
+  standardQuantity Float    // Standard qty required per batch
+  uom              String
+  createdAt        DateTime @default(now())
+}
+
+model ProductionRun {
+  id                   String   @id @default(cuid())
+  runNumber            String   @unique // PR-YYYYMM-001
+  bomId                String
+  bom                  BOM      @relation(fields: [bomId], references: [id])
+  finishedGoodItemId   String
+  finishedGoodItem     Item     @relation(fields: [finishedGoodItemId], references: [id])
+  plannedBatches       Float    @default(1.0)
+  expectedOutput       Float    // 200 packets
+  actualOutput         Float    // 188 packets
+  yieldVariancePercent Float    @default(0.0) // e.g. -6.0%
+  yieldVarianceFlag    Boolean  @default(false)
+  status               String   @default("COMPLETED") // DRAFT, COMPLETED, CANCELLED
+  runDate              DateTime @default(now())
+  supervisorId         String?
+  supervisor           User?    @relation(fields: [supervisorId], references: [id])
+  notes                String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  consumptions ProductionConsumption[]
+  overheads    ProductionOverhead[]
+}
+
+model ProductionConsumption {
+  id              String        @id @default(cuid())
+  productionRunId String
+  productionRun   ProductionRun @relation(fields: [productionRunId], references: [id], onDelete: Cascade)
+  itemId          String
+  item            Item          @relation(fields: [itemId], references: [id])
+  plannedQty      Float
+  actualQty       Float
+  varianceQty     Float         @default(0.0)
+  variancePercent Float         @default(0.0)
+  varianceFlag    Boolean       @default(false)
+  damagedQty      Float         @default(0.0)
+  notes           String?
+}
+
+model ProductionOverhead {
+  id              String        @id @default(cuid())
+  productionRunId String
+  productionRun   ProductionRun @relation(fields: [productionRunId], references: [id], onDelete: Cascade)
+  overheadType    String        // LABOUR, POWER_GAS, OTHER
+  amount          Float         // in Rupees
+  amountPaisa     Int           // in integer Paisa
+  notes           String?
+  createdAt       DateTime      @default(now())
+}
+
+model InventoryLedger {
+  id              String   @id @default(cuid())
+  itemId          String
+  item            Item     @relation(fields: [itemId], references: [id])
+  transactionType String   // OPENING_STOCK, PURCHASE_RECEIPT, PRODUCTION_ISSUE, PRODUCTION_YIELD, SALES_DISPATCH, DAMAGED_SCRAP, STOCK_ADJUSTMENT
+  sourceDocType   String   // INITIAL, PURCHASE, PRODUCTION_RUN, INVOICE, ADJUSTMENT
+  sourceDocId     String   // ID or number of source document
+  quantityChange  Float    // Positive or negative
+  balanceAfter    Float    // Closing balance snapshot
+  unitRate        Float    @default(0.0)
+  notes           String?
+  createdAt       DateTime @default(now())
+  createdById     String?
+}
+
+model Purchase {
+  id             String         @id @default(cuid())
+  purchaseNumber String         @unique // PO-YYYYMM-001
+  supplierId     String
+  supplier       Supplier       @relation(fields: [supplierId], references: [id])
+  purchaseDate   DateTime       @default(now())
+  totalAmount    Float
+  totalPaisa     Int
+  status         String         @default("RECEIVED") // ORDERED, RECEIVED, CANCELLED
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  items PurchaseItem[]
+}
+
+model PurchaseItem {
+  id          String   @id @default(cuid())
+  purchaseId  String
+  purchase    Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  itemId      String
+  item        Item     @relation(fields: [itemId], references: [id])
+  quantity    Float
+  rate        Float
+  ratePaisa   Int
+  taxRate     Float    @default(5.0)
+  taxAmount   Float    @default(0.0)
+  totalAmount Float
+  totalPaisa  Int
+}
+
+model SalesOrder {
+  id          String           @id @default(cuid())
+  orderNumber String           @unique // SO-YYYYMM-001
+  customerId  String
+  customer    Customer         @relation(fields: [customerId], references: [id])
+  salesmanId  String
+  salesman    User             @relation(fields: [salesmanId], references: [id])
+  status      String           @default("SUBMITTED") // SUBMITTED, APPROVED, INVOICED, DISPATCHED, REJECTED
+  orderDate   DateTime         @default(now())
+  totalAmount Float
+  totalPaisa  Int
+  notes       String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  items   SalesOrderItem[]
+  invoice Invoice?
+}
+
+model SalesOrderItem {
+  id           String     @id @default(cuid())
+  salesOrderId String
+  salesOrder   SalesOrder @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+  itemId       String
+  item         Item       @relation(fields: [itemId], references: [id])
+  orderedQty   Float
+  approvedQty  Float
+  unitPrice    Float
+  pricePaisa   Int
+  lineTotal    Float
+  linePaisa    Int
+}
+
+model Invoice {
+  id                     String    @id @default(cuid())
+  invoiceNumber          String    @unique // INV/YYYY-YY/XXXX
+  salesOrderId           String    @unique
+  salesOrder             SalesOrder @relation(fields: [salesOrderId], references: [id])
+  customerId             String
+  customer               Customer  @relation(fields: [customerId], references: [id])
+  invoiceDate            DateTime  @default(now())
+  factoryStateCode       String    @default("33")
+  placeOfSupplyStateCode String    // '33' or '29'
+  isInterState           Boolean   @default(false)
+  taxableAmount          Float
+  taxablePaisa           Int
+  cgstAmount             Float     @default(0.0)
+  cgstPaisa              Int       @default(0)
+  sgstAmount             Float     @default(0.0)
+  sgstPaisa              Int       @default(0)
+  igstAmount             Float     @default(0.0)
+  igstPaisa              Int       @default(0)
+  grandTotal             Float
+  grandPaisa             Int
+  paymentStatus          String    @default("UNPAID") // UNPAID, PARTIALLY_PAID, PAID
+  dispatchStatus         String    @default("PENDING") // PENDING, DISPATCHED
+  dispatchDate           DateTime?
+  isCancelled            Boolean   @default(false)
+  cancellationReason     String?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  items    InvoiceItem[]
+  payments PaymentReceipt[]
+}
+
+model InvoiceItem {
+  id          String   @id @default(cuid())
+  invoiceId   String
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  itemId      String
+  item        Item     @relation(fields: [itemId], references: [id])
+  hsnCode     String
+  quantity    Float
+  unitPrice   Float
+  pricePaisa  Int
+  taxable     Float
+  taxablePaisa Int
+  cgstRate    Float    @default(0.0)
+  cgstAmount  Float    @default(0.0)
+  sgstRate    Float    @default(0.0)
+  sgstAmount  Float    @default(0.0)
+  igstRate    Float    @default(0.0)
+  igstAmount  Float    @default(0.0)
+  totalAmount Float
+  totalPaisa  Int
+}
+
+model PaymentReceipt {
+  id             String   @id @default(cuid())
+  receiptNumber  String   @unique // REC-YYYYMM-001
+  customerId     String
+  customer       Customer @relation(fields: [customerId], references: [id])
+  invoiceId      String
+  invoice        Invoice  @relation(fields: [invoiceId], references: [id])
+  paymentDate    DateTime @default(now())
+  paymentMode    String   // CASH, UPI, BANK_TRANSFER, CHEQUE
+  amountReceived Float
+  amountPaisa    Int
+  notes          String?
+  createdAt      DateTime @default(now())
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  entityName  String   // SalesOrder, Invoice, ProductionRun
+  entityId    String
+  action      String   // CREATE, UPDATE, CANCEL, APPROVE
+  oldValues   String?  // JSON string
+  newValues   String?  // JSON string
+  performedBy String?
+  user        User?    @relation(fields: [performedBy], references: [id])
+  timestamp   DateTime @default(now())
+}
