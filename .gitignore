@@ -12,3 +12,9 @@ yarn-error.log*
 .env.production
 prisma/*.db
 prisma/*.db-journal
+node_modules/
+.next/
+out/
+.vercel/
+.env*
+!.env.example
